@@ -3,6 +3,7 @@ PyTorch computes metrics w.r.t. each item in a batch individually.
 It then sums or averages those individual metrics. These implementations
 take the same approach.
 """
+
 import torch
 import torch.nn.functional as F
 from dataclasses import dataclass
@@ -11,6 +12,7 @@ import numpy as np
 import numba as nb
 
 from .losses import LpLoss
+
 
 @dataclass
 class Metrics:
@@ -38,6 +40,7 @@ class Metrics:
                 - High: {self.fourier_high}
         """
 
+
 def compute_metrics(pred, label, dfun):
     low, mid, high = fourier_error(pred, label, 8, 8)
     return Metrics(
@@ -49,37 +52,42 @@ def compute_metrics(pred, label, dfun):
         interface_rmse=interface_rmse(pred, label, dfun),
         fourier_low=low,
         fourier_mid=mid,
-        fourier_high=high
+        fourier_high=high,
     )
 
+
 def write_metrics(pred, label, iter, stage, writer):
-    writer.add_scalar(f'{stage}/MAE', mae(pred, label), iter)
-    writer.add_scalar(f'{stage}/RMSE', rmse(pred, label), iter)
-    writer.add_scalar(f'{stage}/MaxERror', max_error(pred, label), iter)
+    writer.add_scalar(f"{stage}/MAE", mae(pred, label), iter)
+    writer.add_scalar(f"{stage}/RMSE", rmse(pred, label), iter)
+    writer.add_scalar(f"{stage}/MaxERror", max_error(pred, label), iter)
+
 
 def mae(pred, label):
     return F.l1_loss(pred, label)
 
+
 def relative_error(pred, label):
     assert pred.size() == label.size()
-    loss = LpLoss(d=2, reductions='mean')
+    loss = LpLoss(d=2, reductions="mean")
     return loss(pred, label)
 
+
 def rmse(pred, label):
-    r""" Assumes input has shape [b x h x w]
-    """
+    r"""Assumes input has shape [b x h x w]"""
     assert pred.size() == label.size()
     batch_size = pred.size(0)
-    var_size = pred[0].numel() 
+    var_size = pred[0].numel()
     sum_dim = 1 if pred.dim() == 2 else [1, 2]
     mses = ((pred - label) ** 2).sum(dim=sum_dim) / var_size
     return torch.sqrt(mses).sum() / batch_size
 
+
 def max_error(pred, label):
     return ((pred - label) ** 2).max()
 
+
 def _extract_boundary(tensor):
-    r""" Extracts boundaries of a tensor [... x h x w]
+    r"""Extracts boundaries of a tensor [... x h x w]
     The output will have shape [... x 2h + 2w]
     """
     left = tensor[..., :, 0]
@@ -88,14 +96,15 @@ def _extract_boundary(tensor):
     bottom = tensor[..., -1, :]
     return torch.cat([left, right, top, bottom], dim=-1)
 
+
 def boundary_rmse(pred, label):
-    r""" assumes input has shape [b x h x w]
-    """
+    r"""assumes input has shape [b x h x w]"""
     assert pred.size() == label.size()
     bpred = _extract_boundary(pred)
     blabel = _extract_boundary(label)
     print(bpred.size())
-    return rmse(bpred, blabel) 
+    return rmse(bpred, blabel)
+
 
 def interface_rmse(pred, label, dfun):
     assert pred.size() == label.size()
@@ -108,21 +117,25 @@ def interface_rmse(pred, label, dfun):
         mses.append(interface_mse)
     return torch.sqrt(torch.tensor(mses)).sum() / pred.size(0)
 
+
 @nb.njit
 def get_interface_mask(dgrid):
     interface = np.zeros(dgrid.shape).astype(np.bool_)
     [rows, cols] = dgrid.shape
     for i in range(rows):
         for j in range(cols):
-            adj = ((i < rows - 1 and dgrid[i][j] * dgrid[i+1, j  ] <= 0) or
-                   (i > 0 and dgrid[i][j] * dgrid[i-1, j  ] <= 0) or
-                   (j < cols - 1 and dgrid[i][j] * dgrid[i,   j+1] <= 0) or
-                   (j > 0 and dgrid[i][j] * dgrid[i,   j-1] <= 0))
+            adj = (
+                (i < rows - 1 and dgrid[i][j] * dgrid[i + 1, j] <= 0)
+                or (i > 0 and dgrid[i][j] * dgrid[i - 1, j] <= 0)
+                or (j < cols - 1 and dgrid[i][j] * dgrid[i, j + 1] <= 0)
+                or (j > 0 and dgrid[i][j] * dgrid[i, j - 1] <= 0)
+            )
             interface[i][j] = adj
     return interface
 
+
 def fourier_error(pred, target, Lx, Ly):
-    r""" This function is taken and modified from PDEBench
+    r"""This function is taken and modified from PDEBench
     https://github.com/pdebench/PDEBench/blob/main/pdebench/models/metrics.py
     """
     ILOW = 4
@@ -140,7 +153,7 @@ def fourier_error(pred, target, Lx, Ly):
     err_F = torch.zeros((nb, min(nx // 2, ny // 2)))
     for i in range(nx // 2):
         for j in range(ny // 2):
-            it = math.floor(math.sqrt(i ** 2 + j ** 2))
+            it = math.floor(math.sqrt(i**2 + j**2))
             if it > min(nx // 2, ny // 2) - 1:
                 continue
             err_F[:, it] += _err_F[:, i, j]

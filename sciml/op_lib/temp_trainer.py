@@ -18,26 +18,26 @@ from .heatflux import heatflux
 from .dist_utils import local_rank, is_leader_process
 from .downsample import downsample_domain
 
-from torch.cuda import nvtx 
+from torch.cuda import nvtx
 import time
 
-t_bulk_map = {
-    'wall_super_heat': 58,
-    'subcooled': 50
-}
+t_bulk_map = {"wall_super_heat": 58, "subcooled": 50}
+
 
 class TempTrainer:
-    def __init__(self,
-                 model,
-                 future_window,
-                 push_forward_steps,
-                 train_dataloader,
-                 val_dataloader,
-                 optimizer,
-                 lr_scheduler,
-                 val_variable,
-                 writer,
-                 cfg):
+    def __init__(
+        self,
+        model,
+        future_window,
+        push_forward_steps,
+        train_dataloader,
+        val_dataloader,
+        optimizer,
+        lr_scheduler,
+        val_variable,
+        writer,
+        cfg,
+    ):
         self.model = model
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
@@ -50,11 +50,11 @@ class TempTrainer:
 
         self.push_forward_steps = push_forward_steps
         self.future_window = future_window
-        self.local_rank = local_rank() 
+        self.local_rank = local_rank()
 
     def train(self, max_epochs, *args, **kwargs):
         for epoch in range(max_epochs):
-            print('epoch ', epoch)
+            print("epoch ", epoch)
             self.train_step(epoch)
             self.val_step(epoch)
             # test each epoch
@@ -83,7 +83,9 @@ class TempTrainer:
             temp = temp.to(self.local_rank).float()
             vel = vel.to(self.local_rank).float()
             label = label.to(self.local_rank).float()
-            coords, temp, vel, label = downsample_domain(self.cfg.train.downsample_factor, coords, temp, vel, label)
+            coords, temp, vel, label = downsample_domain(
+                self.cfg.train.downsample_factor, coords, temp, vel, label
+            )
 
             pred = self.push_forward_trick(coords, temp, vel)
 
@@ -92,14 +94,14 @@ class TempTrainer:
             loss = self.loss(pred, label)
             self.optimizer.zero_grad()
             loss.backward()
-            #nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+            # nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
             self.optimizer.step()
             self.lr_scheduler.step()
 
             mse_loss = F.mse_loss(pred, label).detach()
-            print(f'train loss: {loss}, mse: {mse_loss}')
+            print(f"train loss: {loss}, mse: {mse_loss}")
             global_iter = epoch * len(self.train_dataloader) + iter
-            write_metrics(pred, label, global_iter, 'Train', self.writer)
+            write_metrics(pred, label, global_iter, "Train", self.writer)
             del temp, vel, label
 
     def val_step(self, epoch):
@@ -113,9 +115,9 @@ class TempTrainer:
                 pred = self._forward_int(coords, temp, vel)
                 temp_loss = F.mse_loss(pred, label)
                 loss = temp_loss
-            print(f'val loss: {loss}')
+            print(f"val loss: {loss}")
             global_iter = epoch * len(self.val_dataloader) + iter
-            write_metrics(pred, label, global_iter, 'Val', self.writer)
+            write_metrics(pred, label, global_iter, "Val", self.writer)
             del temp, vel, label
 
     def test(self, dataset, max_timestep=200):
@@ -124,7 +126,7 @@ class TempTrainer:
             temps = []
             labels = []
             time_lim = min(len(dataset), max_timestep)
-            
+
             start = time.time()
             for timestep in range(0, time_lim, self.future_window):
                 coords, temp, vel, label = dataset[timestep]
@@ -139,23 +141,22 @@ class TempTrainer:
                     temps.append(temp.detach().cpu())
                     labels.append(label.detach().cpu())
             dur = time.time() - start
-            print(f'rollout time {dur} (s)')
-
+            print(f"rollout time {dur} (s)")
 
             temps = torch.cat(temps, dim=0)
             labels = torch.cat(labels, dim=0)
-            dfun = dataset.get_dfun()[:temps.size(0)]
+            dfun = dataset.get_dfun()[: temps.size(0)]
 
             print(temps.max(), temps.min())
             print(labels.max(), labels.min())
 
             metrics = compute_metrics(temps, labels, dfun)
             print(metrics)
-            
-            #xgrid = dataset.get_x().permute((2, 0, 1))
-            #print(heatflux(temps, dfun, self.val_variable, xgrid, dataset.get_dy()))
-            #print(heatflux(labels, dfun, self.val_variable, xgrid, dataset.get_dy()))
-            
+
+            # xgrid = dataset.get_x().permute((2, 0, 1))
+            # print(heatflux(temps, dfun, self.val_variable, xgrid, dataset.get_dy()))
+            # print(heatflux(labels, dfun, self.val_variable, xgrid, dataset.get_dy()))
+
             plt_temp(temps, labels, self.model.__class__.__name__)
             plt_iter_mae(temps, labels)
 

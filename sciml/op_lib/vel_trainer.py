@@ -16,16 +16,19 @@ from .metrics import compute_metrics
 from .losses import LpLoss
 from .plt_util import plt_temp, plt_vel
 
+
 class VelTrainer:
-    def __init__(self,
-                 model,
-                 train_dataloader,
-                 val_dataloader,
-                 optimizer,
-                 lr_scheduler,
-                 val_variable,
-                 writer,
-                 cfg):
+    def __init__(
+        self,
+        model,
+        train_dataloader,
+        val_dataloader,
+        optimizer,
+        lr_scheduler,
+        val_variable,
+        writer,
+        cfg,
+    ):
         self.model = model
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
@@ -42,19 +45,19 @@ class VelTrainer:
             model_name = self.model.module.__class__.__name__
         else:
             model_name = self.model.__class__.__name__
-        ckpt_file = f'{model_name}_{cfg.torch_dataset_name}_{cfg.train.max_epochs}_{timestamp}.pt'
-        ckpt_root = Path.home() / f'{log_dir}/{dataset_name}'
+        ckpt_file = f"{model_name}_{cfg.torch_dataset_name}_{cfg.train.max_epochs}_{timestamp}.pt"
+        ckpt_root = Path.home() / f"{log_dir}/{dataset_name}"
         Path(ckpt_root).mkdir(parents=True, exist_ok=True)
-        ckpt_path = f'{ckpt_root}/{ckpt_file}'
-        print(f'saving model to {ckpt_path}')
+        ckpt_path = f"{ckpt_root}/{ckpt_file}"
+        print(f"saving model to {ckpt_path}")
         if cfg.distributed:
-            torch.save(self.model.module.state_dict(), f'{ckpt_path}')
+            torch.save(self.model.module.state_dict(), f"{ckpt_path}")
         else:
-            torch.save(self.model.state_dict(), f'{ckpt_path}')
+            torch.save(self.model.state_dict(), f"{ckpt_path}")
 
     def train(self, max_epochs, dataset_name):
         for epoch in range(max_epochs):
-            print('epoch ', epoch)
+            print("epoch ", epoch)
             self.train_step(epoch)
             self.val_step(epoch)
             self.lr_scheduler.step()
@@ -72,12 +75,12 @@ class VelTrainer:
             temp_loss = self.loss(pred[:, 0], label[:, 0])
             velx_loss = self.loss(pred[:, 1], label[:, 1])
             vely_loss = self.loss(pred[:, 2], label[:, 2])
-            print(f'{temp_loss}, {velx_loss}, {vely_loss}')
+            print(f"{temp_loss}, {velx_loss}, {vely_loss}")
             loss = (temp_loss + velx_loss + vely_loss) / 3
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
-            print(f'train loss: {loss}')
+            print(f"train loss: {loss}")
             del input, label
 
     def val_step(self, epoch):
@@ -90,9 +93,9 @@ class VelTrainer:
                 temp_loss = F.mse_loss(pred[:, 0], label[:, 0])
                 velx_loss = F.mse_loss(pred[:, 1], label[:, 1])
                 vely_loss = F.mse_loss(pred[:, 2], label[:, 2])
-                print(f'{temp_loss}, {velx_loss}, {vely_loss}')
+                print(f"{temp_loss}, {velx_loss}, {vely_loss}")
                 loss = (temp_loss + velx_loss + vely_loss) / 3
-            print(f'val loss: {loss}')
+            print(f"val loss: {loss}")
             del input, label
 
     def test(self, dataset):
@@ -132,22 +135,25 @@ class VelTrainer:
 
         def mag(velx, vely):
             return torch.sqrt(velx**2 + vely**2)
+
         mag_preds = mag(velx_preds, vely_preds)
         mag_labels = mag(velx_labels, vely_labels)
-        
+
         def print_metrics(pred, label):
-            metrics = compute_metrics(pred, label, dataset.get_dfun().permute((2,0,1)))
+            metrics = compute_metrics(
+                pred, label, dataset.get_dfun().permute((2, 0, 1))
+            )
             print(metrics)
 
-        print('temp metrics:')
+        print("temp metrics:")
         print_metrics(temp_preds, temp_labels)
-        print('velx metrics:')
+        print("velx metrics:")
         print_metrics(velx_preds, velx_labels)
-        print('vely metrics:')
+        print("vely metrics:")
         print_metrics(vely_preds, vely_labels)
-        print('mag metrics:')
+        print("mag metrics:")
         print_metrics(mag_preds, mag_labels)
-        
+
         model_name = self.model.__class__.__name__
         plt_temp(temp_preds, temp_labels, model_name)
         max_mag = mag_labels.max()
