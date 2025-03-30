@@ -1,3 +1,4 @@
+import os
 import torch
 from torch import nn
 import torchvision
@@ -37,6 +38,7 @@ class PushVelTrainer:
         val_variable,
         writer,
         cfg,
+        result_save_path,
     ):
         self.model = model
         self.train_dataloader = train_dataloader
@@ -51,6 +53,7 @@ class PushVelTrainer:
         self.max_push_forward_steps = max_push_forward_steps
         self.future_window = future_window
         self.use_coords = cfg.train.use_coords
+        self.result_save_path = result_save_path
 
     def save_checkpoint(self, log_dir, dataset_name):
         timestamp = int(time.time())
@@ -59,7 +62,7 @@ class PushVelTrainer:
         else:
             model_name = self.model.__class__.__name__
         ckpt_file = f"{model_name}_{self.cfg.torch_dataset_name}_{self.cfg.train.max_epochs}_{timestamp}.pt"
-        ckpt_root = Path.home() / f"{log_dir}/{dataset_name}"
+        ckpt_root = Path("..") / f"{log_dir}/{dataset_name}"
         Path(ckpt_root).mkdir(parents=True, exist_ok=True)
         ckpt_path = f"{ckpt_root}/{ckpt_file}"
         print(f"saving model to {ckpt_path}")
@@ -233,6 +236,7 @@ class PushVelTrainer:
         vels = []
         vels_labels = []
         time_limit = min(max_time_limit, len(dataset))
+        start_time = time.time()
         for timestep in range(0, time_limit, self.future_window):
             coords, temp, vel, dfun, temp_label, vel_label = dataset[timestep]
             coords = coords.to(local_rank()).float().unsqueeze(0)
@@ -254,6 +258,10 @@ class PushVelTrainer:
                 temps_labels.append(temp_label.detach().cpu())
                 vels.append(vel_pred.detach().cpu())
                 vels_labels.append(vel_label.detach().cpu())
+
+        end_time = time.time()
+        total_prediction_time = end_time - start_time
+        frame_prediction_time = total_prediction_time / time_limit
 
         temps = torch.cat(temps, dim=0)
         temps_labels = torch.cat(temps_labels, dim=0)
@@ -280,6 +288,17 @@ class PushVelTrainer:
         metrics = compute_metrics(vely_preds, vely_labels, dfun)
         print("VELY METRICS")
         print(metrics)
+
+        # save metrics to file
+        os.makedirs(self.result_save_path, exist_ok=True)
+        with open(self.result_save_path / "metrics.txt", "w") as f:
+            f.write(f"Temp metrics: {metrics}\n")
+            f.write(f"Velx metrics: {metrics}\n")
+            f.write(f"Vely metrics: {metrics}\n")
+
+        with open(self.result_save_path / "prediction_time.txt", "w") as f:
+            f.write(f"Total prediction time: {total_prediction_time}\n")
+            f.write(f"Frame prediction time: {frame_prediction_time}\n")
 
         # xgrid = dataset.get_x().permute((2, 0, 1))
         # print(heatflux(temps, dfun, self.val_variable, xgrid, dataset.get_dy()))
