@@ -8,7 +8,7 @@ dependencies:
   - python=3.9
   - pytorch
   - torchvision
-  - pytorch-cuda=11.7
+  - pytorch-cuda=11.8
   - pyg
   - pytorch-scatter
   - numpy
@@ -17,7 +17,7 @@ dependencies:
   - pip
   - pip:
     - hydra-core
-    - git+https://github.com/neuraloperator/neuraloperator
+    - neuraloperator==0.2.0
     - opencv-python
     - matplotlib
     - tensorboard

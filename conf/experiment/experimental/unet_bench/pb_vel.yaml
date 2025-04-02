@@ -1,16 +1,16 @@
 torch_dataset_name: vel_dataset 
 
-distributed: True
+distributed: False
 
 train:
   max_epochs: 25
   batch_size: 4
   shuffle_data: True
-  time_window: 5
-  future_window: 5
+  time_window: 10
+  future_window: 10
   push_forward_steps: 1
   use_coords: False
-  noise: True
+  noise: False
   downsample_factor: 1 
 
 model:
