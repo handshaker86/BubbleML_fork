@@ -209,7 +209,7 @@ def train_app(cfg):
         optimizer, [warmup_lr, warm_schedule], [warmup_iters]
     )
 
-    result_save_path = Path("../results") / cfg.dataset.name / exp.model.model_name
+    result_save_path = Path("results") / cfg.dataset.name / exp.model.model_name
     result_save_path.mkdir(parents=True, exist_ok=True)
 
     TrainerClass = trainer_map[exp.torch_dataset_name]

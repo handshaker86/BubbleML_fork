@@ -23,8 +23,11 @@ def plt_iter_mae(temps, labels):
     for i in range(len(temps)):
         rmse = torch.sqrt(torch.mean(((temps[i] - labels[i]) ** 2).detach().cpu()))
         rmses.append(rmse)
-    job_id = os.environ['SLURM_JOB_ID']
-    job_path = Path(f'test_im/temp/{job_id}/')
+    job_id = os.getenv("SLURM_JOB_ID")
+    if job_id is None:
+        job_path = Path('test_im/temp/')
+    else:
+        job_path = Path(f'test_im/temp/{job_id}/')
     job_path.mkdir(parents=True, exist_ok=True)
     with open(str(job_path) + 'iter_rmse', 'w+') as f:
         for rmse in rmses:
@@ -71,8 +74,11 @@ def plt_temp(temps, labels, model_name):
                     transparent=True)
         plt.close()
     """
-    job_id = os.environ['SLURM_JOB_ID']
-    im_path = Path(f'test_im/temp/{job_id}/')
+    job_id = os.getenv("SLURM_JOB_ID")
+    if job_id is None:
+        im_path = Path('test_im/temp/')
+    else:
+        im_path = Path(f'test_im/temp/{job_id}/')
     im_path.mkdir(parents=True, exist_ok=True)
     torch.save(temps, f'{im_path}/model_ouput.pt')
     torch.save(labels, f'{im_path}/sim_ouput.pt')
@@ -123,8 +129,11 @@ def plt_vel(vel_preds, vel_labels,
         plt.savefig(f'{str(im_path)}/{i_str}.png', dpi=500)
         plt.close()
     """
-    job_id = os.environ['SLURM_JOB_ID']
-    im_path = Path(f'test_im/vel/{job_id}/')
+    job_id = os.getenv("SLURM_JOB_ID")
+    if job_id is None:
+        im_path = Path('test_im/vel/')
+    else:
+        im_path = Path(f'test_im/vel/{job_id}/')
     im_path.mkdir(parents=True, exist_ok=True)
     torch.save(vel_preds, f'{im_path}/mag_ouput.pt')
     torch.save(vel_labels, f'{im_path}/mag_label.pt')
