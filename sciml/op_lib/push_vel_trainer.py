@@ -66,7 +66,7 @@ class PushVelTrainer:
         else:
             model_name = self.model.__class__.__name__
         ckpt_file = f"{model_name}_{self.cfg.torch_dataset_name}_{self.cfg.train.max_epochs}_{timestamp}.pt"
-        ckpt_root = Path("..") / f"{log_dir}/{dataset_name}"
+        ckpt_root = f"{log_dir}/{dataset_name}/training_model_ckpt"
         Path(ckpt_root).mkdir(parents=True, exist_ok=True)
         ckpt_path = f"{ckpt_root}/{ckpt_file}"
         print(f"saving model to {ckpt_path}")
@@ -263,7 +263,7 @@ class PushVelTrainer:
             temp_label = self._inverse_transform(temp_label, temp_scale)
             vel_label = self._inverse_transform(vel_label, vel_scale)
             with torch.no_grad():
-                temp_pred, vel_pred = self._forwaxrd_int(
+                temp_pred, vel_pred = self._forward_int(
                     coords[:, 0], temp[:, 0], vel[:, 0], dfun[:, 0]
                 )
                 temp_pred = temp_pred.squeeze(0)

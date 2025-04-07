@@ -173,7 +173,8 @@ def train_app(cfg):
     )
 
     if cfg.model_checkpoint:
-        model.load_state_dict(torch.load(cfg.model_checkpoint))
+        save_dict = torch.load(cfg.model_checkpoint)
+        model.load_state_dict(save_dict["model_state_dict"], weights_only=True)
     print(model)
     np = nparams(model)
     print(f"Model has {np} parameters")
@@ -243,7 +244,7 @@ def train_app(cfg):
         ckpt_file = (
             f"{model_name}_{cfg.dataset.name}_{exp.torch_dataset_name}_{timestamp}.pt"
         )
-        ckpt_root = Path("..") / f"{log_dir}/{cfg.dataset.name}"
+        ckpt_root = f"{log_dir}/{cfg.dataset.name}"
         Path(ckpt_root).mkdir(parents=True, exist_ok=True)
         ckpt_path = f"{ckpt_root}/{ckpt_file}"
         print(f"saving model to {ckpt_path}")
