@@ -279,22 +279,22 @@ class PushVelTrainer:
 
         print(temps.size(), temps_labels.size(), dfun.size())
 
-        metrics = compute_metrics(temps, temps_labels, dfun)
+        temp_metrics = compute_metrics(temps, temps_labels, dfun)
         print("TEMP METRICS")
-        print(metrics)
-        metrics = compute_metrics(velx_preds, velx_labels, dfun)
+        print(temp_metrics)
+        velx_metrics = compute_metrics(velx_preds, velx_labels, dfun)
         print("VELX METRICS")
-        print(metrics)
-        metrics = compute_metrics(vely_preds, vely_labels, dfun)
+        print(velx_metrics)
+        vely_metrics = compute_metrics(vely_preds, vely_labels, dfun)
         print("VELY METRICS")
-        print(metrics)
+        print(vely_metrics)
 
         # save metrics to file
         os.makedirs(self.result_save_path, exist_ok=True)
         with open(self.result_save_path / "metrics.txt", "w") as f:
-            f.write(f"Temp metrics: {metrics}\n")
-            f.write(f"Velx metrics: {metrics}\n")
-            f.write(f"Vely metrics: {metrics}\n")
+            f.write(f"Temp metrics: {temp_metrics}\n")
+            f.write(f"Velx metrics: {velx_metrics}\n")
+            f.write(f"Vely metrics: {vely_metrics}\n")
 
         with open(self.result_save_path / "prediction_time.txt", "w") as f:
             f.write(f"Total prediction time: {total_prediction_time}\n")
