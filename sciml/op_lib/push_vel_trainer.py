@@ -229,6 +229,13 @@ class PushVelTrainer:
             write_metrics(vel_pred, vel_label, global_iter, "ValVel", self.writer)
             del temp, vel, temp_label, vel_label
 
+    @staticmethod
+    def _inverse_transform(data, scale):
+        r"""
+        Inverse normalization of the data.
+        """
+        return data * scale
+
     def test(self, dataset, max_time_limit=200):
         self.model.eval()
         temps = []
@@ -237,6 +244,9 @@ class PushVelTrainer:
         vels_labels = []
         time_limit = min(max_time_limit, len(dataset))
         start_time = time.time()
+        temp_scale = self.train_dataloader.dataset.temp_scale
+        vel_scale = self.train_dataloader.dataset.vel_scale
+
         for timestep in range(0, time_limit, self.future_window):
             coords, temp, vel, dfun, temp_label, vel_label = dataset[timestep]
             coords = coords.to(local_rank()).float().unsqueeze(0)
@@ -246,14 +256,18 @@ class PushVelTrainer:
             # val doesn't apply push-forward
             temp_label = temp_label[0].to(local_rank()).float()
             vel_label = vel_label[0].to(local_rank()).float()
+            temp_label = self._inverse_transform(temp_label, temp_scale)
+            vel_label = self._inverse_transform(vel_label, vel_scale)
             with torch.no_grad():
-                temp_pred, vel_pred = self._forward_int(
+                temp_pred, vel_pred = self._forwaxrd_int(
                     coords[:, 0], temp[:, 0], vel[:, 0], dfun[:, 0]
                 )
                 temp_pred = temp_pred.squeeze(0)
                 vel_pred = vel_pred.squeeze(0)
                 dataset.write_temp(temp_pred, timestep)
                 dataset.write_vel(vel_pred, timestep)
+                temp_pred = self._inverse_transform(temp_pred, temp_scale)
+                vel_pred = self._inverse_transform(vel_pred, vel_scale)
                 temps.append(temp_pred.detach().cpu())
                 temps_labels.append(temp_label.detach().cpu())
                 vels.append(vel_pred.detach().cpu())
