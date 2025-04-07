@@ -39,6 +39,8 @@ class PushVelTrainer:
         writer,
         cfg,
         result_save_path,
+        train_max_temp,
+        train_max_vel,
     ):
         self.model = model
         self.train_dataloader = train_dataloader
@@ -54,6 +56,8 @@ class PushVelTrainer:
         self.future_window = future_window
         self.use_coords = cfg.train.use_coords
         self.result_save_path = result_save_path
+        self.train_max_temp = train_max_temp
+        self.train_max_vel = train_max_vel
 
     def save_checkpoint(self, log_dir, dataset_name):
         timestamp = int(time.time())
@@ -244,8 +248,8 @@ class PushVelTrainer:
         vels_labels = []
         time_limit = min(max_time_limit, len(dataset))
         start_time = time.time()
-        temp_scale = self.train_dataloader.dataset.temp_scale
-        vel_scale = self.train_dataloader.dataset.vel_scale
+        temp_scale = self.train_max_temp
+        vel_scale = self.train_max_vel
 
         for timestep in range(0, time_limit, self.future_window):
             coords, temp, vel, dfun, temp_label, vel_label = dataset[timestep]
