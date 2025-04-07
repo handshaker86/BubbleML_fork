@@ -225,6 +225,8 @@ def train_app(cfg):
         writer,
         exp,
         result_save_path,
+        train_max_temp,
+        train_max_vel,
     )
     print(trainer)
 

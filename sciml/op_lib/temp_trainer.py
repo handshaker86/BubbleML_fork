@@ -37,6 +37,8 @@ class TempTrainer:
         val_variable,
         writer,
         cfg,
+        train_max_temp,
+        train_max_vel,
     ):
         self.model = model
         self.train_dataloader = train_dataloader
