@@ -247,9 +247,9 @@ class PushVelTrainer:
         vels = []
         vels_labels = []
         time_limit = min(max_time_limit, len(dataset))
-        start_time = time.time()
         temp_scale = self.train_max_temp
         vel_scale = self.train_max_vel
+        total_prediction_time = 0.0
 
         for timestep in range(0, time_limit, self.future_window):
             coords, temp, vel, dfun, temp_label, vel_label = dataset[timestep]
@@ -262,6 +262,13 @@ class PushVelTrainer:
             vel_label = vel_label[0].to(local_rank()).float()
             temp_label = self._inverse_transform(temp_label, temp_scale)
             vel_label = self._inverse_transform(vel_label, vel_scale)
+
+            # inference warm-up
+            temp_pred, vel_pred = self._forward_int(
+                coords[:, 0], temp[:, 0], vel[:, 0], dfun[:, 0]
+            )
+
+            start_time = time.time()
             with torch.no_grad():
                 temp_pred, vel_pred = self._forward_int(
                     coords[:, 0], temp[:, 0], vel[:, 0], dfun[:, 0]
@@ -276,8 +283,9 @@ class PushVelTrainer:
                 temps_labels.append(temp_label.detach().cpu())
                 vels.append(vel_pred.detach().cpu())
                 vels_labels.append(vel_label.detach().cpu())
+            end_time = time.time()
+            total_prediction_time += end_time - start_time
 
-        end_time = time.time()
         total_prediction_time = end_time - start_time
         frame_prediction_time = total_prediction_time / time_limit
 
