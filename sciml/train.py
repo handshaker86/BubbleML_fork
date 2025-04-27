@@ -173,8 +173,8 @@ def train_app(cfg):
     )
 
     if cfg.model_checkpoint:
-        save_dict = torch.load(cfg.model_checkpoint)
-        model.load_state_dict(save_dict["model_state_dict"], weights_only=True)
+        save_dict = torch.load(cfg.model_checkpoint, weights_only=True)
+        model.load_state_dict(save_dict["model_state_dict"])
     print(model)
     np = nparams(model)
     print(f"Model has {np} parameters")
@@ -256,6 +256,8 @@ def train_app(cfg):
 
         if cfg.test and dist_utils.is_leader_process():
             metrics = trainer.test(val_dataset.datasets[0])
+        else:
+            metrics = None
 
         save_dict = {
             "id": f"{cfg.dataset.name}_{model_name}_{exp.torch_dataset_name}",
