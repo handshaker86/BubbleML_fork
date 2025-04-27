@@ -69,7 +69,7 @@ def get_model(model_name,
     elif model_name == _FNO:
         model = FNO(n_modes=(exp.model.modes, exp.model.modes),
                     hidden_channels=exp.model.hidden_channels,
-                    domain_padding=exp.model.domain_padding[0],
+                    domain_padding=None,
                     in_channels=in_channels,
                     out_channels=out_channels,
                     n_layers=exp.model.n_layers,

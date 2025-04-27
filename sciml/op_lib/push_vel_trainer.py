@@ -322,7 +322,15 @@ class PushVelTrainer:
             f.write(f"Velx metrics: {velx_metrics}\n")
             f.write(f"Vely metrics: {vely_metrics}\n")
 
-        with open(self.result_save_path / "prediction_time.txt", "w") as f:
+        with open(self.result_save_path / "loss.txt", "a") as f:
+            velx_loss = velx_metrics.rmse
+            vely_loss = vely_metrics.rmse
+            vel_rmse = (velx_loss + vely_loss) / 2
+            temp_loss = temp_metrics.rmse
+            f.write(f"Velocity RMSE: {vel_rmse}\n")
+            f.write(f"Temperature RMSE: {temp_loss}\n")
+
+        with open(self.result_save_path / "predict_time.txt", "w") as f:
             f.write(f"Total prediction time: {total_prediction_time}\n")
             f.write(f"Frame prediction time: {frame_prediction_time}\n")
 

@@ -173,8 +173,8 @@ def train_app(cfg):
     )
 
     if cfg.model_checkpoint:
-        save_dict = torch.load(cfg.model_checkpoint)
-        model.load_state_dict(save_dict["model_state_dict"], weights_only=True)
+        save_dict = torch.load(cfg.model_checkpoint, weights_only=True)
+        model.load_state_dict(save_dict["model_state_dict"])
     print(model)
     np = nparams(model)
     print(f"Model has {np} parameters")
@@ -210,7 +210,12 @@ def train_app(cfg):
         optimizer, [warmup_lr, warm_schedule], [warmup_iters]
     )
 
-    result_save_path = Path("results") / cfg.dataset.name / exp.model.model_name
+    result_save_path = (
+        Path("results")
+        / f"time_step={exp.train.future_window}"
+        / exp.model.model_name
+        / cfg.dataset.name
+    )
     result_save_path.mkdir(parents=True, exist_ok=True)
 
     TrainerClass = trainer_map[exp.torch_dataset_name]
@@ -251,6 +256,8 @@ def train_app(cfg):
 
         if cfg.test and dist_utils.is_leader_process():
             metrics = trainer.test(val_dataset.datasets[0])
+        else:
+            metrics = None
 
         save_dict = {
             "id": f"{cfg.dataset.name}_{model_name}_{exp.torch_dataset_name}",
