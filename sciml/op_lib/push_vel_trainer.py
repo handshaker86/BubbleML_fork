@@ -286,7 +286,6 @@ class PushVelTrainer:
             end_time = time.time()
             total_prediction_time += end_time - start_time
 
-        total_prediction_time = end_time - start_time
         frame_prediction_time = total_prediction_time / time_limit
 
         temps = torch.cat(temps, dim=0)
