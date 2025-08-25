@@ -325,7 +325,7 @@ class PushVelTrainer:
             f.write(f"Velx metrics: {velx_metrics}\n")
             f.write(f"Vely metrics: {vely_metrics}\n")
 
-        with open(self.result_save_path / "loss.txt", "a") as f:
+        with open(self.result_save_path / "loss.txt", "w") as f:
             velx_loss = velx_metrics.rmse
             vely_loss = vely_metrics.rmse
             vel_rmse = (velx_loss + vely_loss) / 2
