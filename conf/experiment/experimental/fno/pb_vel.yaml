@@ -21,6 +21,8 @@ model:
   n_layers: 4
   norm: 'group_norm'
   separable: False
+  modes: 64
+  rank: 0.1
 
 optimizer:
   initial_lr: 1e-3
