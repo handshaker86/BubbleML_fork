@@ -104,7 +104,12 @@ class PushVelTrainer:
         input = torch.cat((temp, vel, dfun), dim=1)
         if self.use_coords:
             input = torch.cat((coords, input), dim=1)
+
+        start = time.perf_counter()
         pred = self.model(input)
+        torch.cuda.synchronize()
+        end = time.perf_counter()
+        compute_time = end - start
 
         # timesteps = (torch.arange(self.future_window) + 1).cuda().unsqueeze(-1).unsqueeze(-1).float()
         # timesteps /= 10 # timestep size is 0.1 for vel
@@ -122,7 +127,7 @@ class PushVelTrainer:
         temp_pred = pred[:, : self.future_window]
         vel_pred = pred[:, self.future_window :]
 
-        return temp_pred, vel_pred
+        return temp_pred, vel_pred, compute_time
 
     def _index_push(self, idx, coords, temp, vel, dfun):
         r"""
@@ -250,6 +255,7 @@ class PushVelTrainer:
         temp_scale = self.train_max_temp
         vel_scale = self.train_max_vel
         total_prediction_time = 0.0
+        total_compute_time = 0.0
 
         # inference warm-up
         for _ in range(5):
@@ -273,9 +279,9 @@ class PushVelTrainer:
             vel_label = vel_label[0].to(local_rank()).float()
             temp_label = self._inverse_transform(temp_label, temp_scale)
             vel_label = self._inverse_transform(vel_label, vel_scale)
-            start_time = time.time()
+            start_time = time.perf_counter()
             with torch.no_grad():
-                temp_pred, vel_pred = self._forward_int(
+                temp_pred, vel_pred, compute_time = self._forward_int(
                     coords[:, 0], temp[:, 0], vel[:, 0], dfun[:, 0]
                 )
                 temp_pred = temp_pred.squeeze(0)
@@ -288,8 +294,10 @@ class PushVelTrainer:
                 temps_labels.append(temp_label.detach().cpu())
                 vels.append(vel_pred.detach().cpu())
                 vels_labels.append(vel_label.detach().cpu())
-            end_time = time.time()
+            torch.cuda.synchronize()
+            end_time = time.perf_counter()
             total_prediction_time += end_time - start_time
+            total_compute_time += compute_time
 
         frame_prediction_time = total_prediction_time / time_limit
 
@@ -337,6 +345,9 @@ class PushVelTrainer:
         with open(self.result_save_path / "predict_time.txt", "w") as f:
             f.write(f"Total prediction time: {total_prediction_time}\n")
             f.write(f"Frame prediction time: {frame_prediction_time}\n")
+
+        with open(self.result_save_path / "compute_time.txt", "w") as f:
+            f.write(f"Total compute time: {total_compute_time}\n")
 
         # xgrid = dataset.get_x().permute((2, 0, 1))
         # print(heatflux(temps, dfun, self.val_variable, xgrid, dataset.get_dy()))
