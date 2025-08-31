@@ -252,14 +252,15 @@ class PushVelTrainer:
         total_prediction_time = 0.0
 
         # inference warm-up
-        coords, temp, vel, dfun, temp_label, vel_label = dataset[0]
-        coords = coords.to(local_rank()).float().unsqueeze(0)
-        temp = temp.to(local_rank()).float().unsqueeze(0)
-        vel = vel.to(local_rank()).float().unsqueeze(0)
-        dfun = dfun.to(local_rank()).float().unsqueeze(0)
-        temp_pred, vel_pred = self._forward_int(
-            coords[:, 0], temp[:, 0], vel[:, 0], dfun[:, 0]
-        )
+        for _ in range(5):
+            coords, temp, vel, dfun, temp_label, vel_label = dataset[0]
+            coords = coords.to(local_rank()).float().unsqueeze(0)
+            temp = temp.to(local_rank()).float().unsqueeze(0)
+            vel = vel.to(local_rank()).float().unsqueeze(0)
+            dfun = dfun.to(local_rank()).float().unsqueeze(0)
+            temp_pred, vel_pred = self._forward_int(
+                coords[:, 0], temp[:, 0], vel[:, 0], dfun[:, 0]
+            )
 
         for timestep in range(0, time_limit, self.future_window):
             coords, temp, vel, dfun, temp_label, vel_label = dataset[timestep]
