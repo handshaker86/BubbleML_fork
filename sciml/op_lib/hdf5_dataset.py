@@ -51,6 +51,8 @@ class HDF5Dataset(Dataset):
         time_window=1,
         future_window=1,
         push_forward_steps=1,
+        is_test=False,
+        test_ratio=0.7,
     ):
         super().__init__()
         assert time_window > 0, "HDF5Dataset.__init__():time window should be positive"
@@ -62,6 +64,8 @@ class HDF5Dataset(Dataset):
         self.push_forward_steps = push_forward_steps
         self.temp_scale = None
         self.vel_scale = None
+        self.is_test = is_test
+        self.test_ratio = test_ratio
         self.reset()
 
     def reset(self):
@@ -81,6 +85,26 @@ class HDF5Dataset(Dataset):
             )
             self._data["x"] = torch.from_numpy(f["x"][:][self.steady_time :])
             self._data["y"] = torch.from_numpy(f["y"][:][self.steady_time :])
+
+        if self.is_test:
+            self._data["temp"] = self._data["temp"][
+                : int(self.test_ratio * len(self._data["temp"]))
+            ]
+            self._data["velx"] = self._data["velx"][
+                : int(self.test_ratio * len(self._data["velx"]))
+            ]
+            self._data["vely"] = self._data["vely"][
+                : int(self.test_ratio * len(self._data["vely"]))
+            ]
+            self._data["dfun"] = self._data["dfun"][
+                : int(self.test_ratio * len(self._data["dfun"]))
+            ]
+            self._data["x"] = self._data["x"][
+                : int(self.test_ratio * len(self._data["x"]))
+            ]
+            self._data["y"] = self._data["y"][
+                : int(self.test_ratio * len(self._data["y"]))
+            ]
 
         self._redim_temp(self.filename)
         if self.temp_scale and self.vel_scale:
@@ -255,6 +279,8 @@ class TempVelDataset(HDF5Dataset):
             time_window,
             future_window,
             push_forward_steps,
+            is_test=True,
+            test_ratio=0.7,
         )
         coords_dim = 2 if use_coords else 0
         self.temp_channels = self.time_window
