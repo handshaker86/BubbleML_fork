@@ -267,8 +267,10 @@ class PushVelTrainer:
             temp_pred, vel_pred = self._forward_int(
                 coords[:, 0], temp[:, 0], vel[:, 0], dfun[:, 0]
             )
+        torch.cuda.synchronize()
 
         for timestep in range(0, time_limit, self.future_window):
+            start_time = time.perf_counter()
             coords, temp, vel, dfun, temp_label, vel_label = dataset[timestep]
             coords = coords.to(local_rank()).float().unsqueeze(0)
             temp = temp.to(local_rank()).float().unsqueeze(0)
@@ -279,7 +281,6 @@ class PushVelTrainer:
             vel_label = vel_label[0].to(local_rank()).float()
             temp_label = self._inverse_transform(temp_label, temp_scale)
             vel_label = self._inverse_transform(vel_label, vel_scale)
-            start_time = time.perf_counter()
             with torch.no_grad():
                 temp_pred, vel_pred, compute_time = self._forward_int(
                     coords[:, 0], temp[:, 0], vel[:, 0], dfun[:, 0]
