@@ -264,7 +264,7 @@ class PushVelTrainer:
             temp = temp.to(local_rank()).float().unsqueeze(0)
             vel = vel.to(local_rank()).float().unsqueeze(0)
             dfun = dfun.to(local_rank()).float().unsqueeze(0)
-            temp_pred, vel_pred = self._forward_int(
+            temp_pred, vel_pred, compute_time = self._forward_int(
                 coords[:, 0], temp[:, 0], vel[:, 0], dfun[:, 0]
             )
         torch.cuda.synchronize()
