@@ -105,11 +105,7 @@ class PushVelTrainer:
         if self.use_coords:
             input = torch.cat((coords, input), dim=1)
 
-        start = time.perf_counter()
         pred = self.model(input)
-        torch.cuda.synchronize()
-        end = time.perf_counter()
-        compute_time = end - start
 
         # timesteps = (torch.arange(self.future_window) + 1).cuda().unsqueeze(-1).unsqueeze(-1).float()
         # timesteps /= 10 # timestep size is 0.1 for vel
@@ -127,7 +123,7 @@ class PushVelTrainer:
         temp_pred = pred[:, : self.future_window]
         vel_pred = pred[:, self.future_window :]
 
-        return temp_pred, vel_pred, compute_time
+        return temp_pred, vel_pred
 
     def _index_push(self, idx, coords, temp, vel, dfun):
         r"""
@@ -245,60 +241,75 @@ class PushVelTrainer:
         """
         return data * scale
 
-    def test(self, dataset, max_time_limit=200):
-        self.model.eval()
-        temps = []
-        temps_labels = []
-        vels = []
-        vels_labels = []
-        time_limit = min(max_time_limit, len(dataset))
-        temp_scale = self.train_max_temp
-        vel_scale = self.train_max_vel
-        total_prediction_time = 0.0
-        total_compute_time = 0.0
+    def test(self, dataset, max_time_limit=200, warmup_runs=5, average_runs=10):
 
-        # inference warm-up
-        for _ in range(5):
+        self.model.eval()
+        print(f"Warming up GPU...")
+        for _ in range(warmup_runs):
             coords, temp, vel, dfun, temp_label, vel_label = dataset[0]
             coords = coords.to(local_rank()).float().unsqueeze(0)
             temp = temp.to(local_rank()).float().unsqueeze(0)
             vel = vel.to(local_rank()).float().unsqueeze(0)
             dfun = dfun.to(local_rank()).float().unsqueeze(0)
-            temp_pred, vel_pred, compute_time = self._forward_int(
+            temp_pred, vel_pred = self._forward_int(
                 coords[:, 0], temp[:, 0], vel[:, 0], dfun[:, 0]
             )
         torch.cuda.synchronize()
+        print("GPU is ready.")
 
-        for timestep in range(0, time_limit, self.future_window):
-            coords, temp, vel, dfun, temp_label, vel_label = dataset[timestep]
-            coords = coords.to(local_rank()).float().unsqueeze(0)
-            temp = temp.to(local_rank()).float().unsqueeze(0)
-            vel = vel.to(local_rank()).float().unsqueeze(0)
-            dfun = dfun.to(local_rank()).float().unsqueeze(0)
-            # val doesn't apply push-forward
-            temp_label = temp_label[0].to(local_rank()).float()
-            vel_label = vel_label[0].to(local_rank()).float()
-            temp_label = self._inverse_transform(temp_label, temp_scale)
-            vel_label = self._inverse_transform(vel_label, vel_scale)
-            start_time = time.perf_counter()
-            with torch.no_grad():
-                temp_pred, vel_pred, compute_time = self._forward_int(
-                    coords[:, 0], temp[:, 0], vel[:, 0], dfun[:, 0]
-                )
-                temp_pred = temp_pred.squeeze(0)
-                vel_pred = vel_pred.squeeze(0)
-                dataset.write_temp(temp_pred, timestep)
-                dataset.write_vel(vel_pred, timestep)
-                temp_pred = self._inverse_transform(temp_pred, temp_scale)
-                vel_pred = self._inverse_transform(vel_pred, vel_scale)
-                temps.append(temp_pred.detach().cpu())
-                temps_labels.append(temp_label.detach().cpu())
-                vels.append(vel_pred.detach().cpu())
-                vels_labels.append(vel_label.detach().cpu())
-            torch.cuda.synchronize()
-            end_time = time.perf_counter()
-            total_prediction_time += end_time - start_time
-            total_compute_time += compute_time
+        num_runs = max(1, average_runs)
+        all_run_times = []
+        time_limit = min(max_time_limit, len(dataset))
+        temp_scale = self.train_max_temp
+        vel_scale = self.train_max_vel
+
+        for run_idx in range(num_runs):
+            self.model.eval()
+            temps = []
+            temps_labels = []
+            vels = []
+            vels_labels = []
+            total_prediction_time = 0.0
+
+            for timestep in range(0, time_limit, self.future_window):
+                coords, temp, vel, dfun, temp_label, vel_label = dataset[timestep]
+                coords = coords.to(local_rank()).float().unsqueeze(0)
+                temp = temp.to(local_rank()).float().unsqueeze(0)
+                vel = vel.to(local_rank()).float().unsqueeze(0)
+                dfun = dfun.to(local_rank()).float().unsqueeze(0)
+                # val doesn't apply push-forward
+                temp_label = temp_label[0].to(local_rank()).float()
+                vel_label = vel_label[0].to(local_rank()).float()
+                temp_label = self._inverse_transform(temp_label, temp_scale)
+                vel_label = self._inverse_transform(vel_label, vel_scale)
+
+                torch.cuda.synchronize()
+                start_time = time.perf_counter()
+                with torch.no_grad():
+                    temp_pred, vel_pred = self._forward_int(
+                        coords[:, 0], temp[:, 0], vel[:, 0], dfun[:, 0]
+                    )
+                    temp_pred = temp_pred.squeeze(0)
+                    vel_pred = vel_pred.squeeze(0)
+                    dataset.write_temp(temp_pred, timestep)
+                    dataset.write_vel(vel_pred, timestep)
+                    temp_pred = self._inverse_transform(temp_pred, temp_scale)
+                    vel_pred = self._inverse_transform(vel_pred, vel_scale)
+                    temps.append(temp_pred.detach().cpu())
+                    temps_labels.append(temp_label.detach().cpu())
+                    vels.append(vel_pred.detach().cpu())
+                    vels_labels.append(vel_label.detach().cpu())
+
+                torch.cuda.synchronize()
+                end_time = time.perf_counter()
+                total_prediction_time += end_time - start_time
+
+            all_run_times.append(total_prediction_time)
+
+        if not all_run_times:
+            total_prediction_time = 0.0
+        else:
+            total_prediction_time = sum(all_run_times) / len(all_run_times)
 
         frame_prediction_time = total_prediction_time / time_limit
 
@@ -328,7 +339,6 @@ class PushVelTrainer:
         print("VELY METRICS")
         print(vely_metrics)
 
-        # save metrics to file
         os.makedirs(self.result_save_path, exist_ok=True)
         with open(self.result_save_path / "metrics.txt", "w") as f:
             f.write(f"Temp metrics: {temp_metrics}\n")
@@ -346,9 +356,6 @@ class PushVelTrainer:
         with open(self.result_save_path / "predict_time.txt", "w") as f:
             f.write(f"Total prediction time: {total_prediction_time}\n")
             f.write(f"Frame prediction time: {frame_prediction_time}\n")
-
-        with open(self.result_save_path / "compute_time.txt", "w") as f:
-            f.write(f"Total compute time: {total_compute_time}\n")
 
         # xgrid = dataset.get_x().permute((2, 0, 1))
         # print(heatflux(temps, dfun, self.val_variable, xgrid, dataset.get_dy()))
