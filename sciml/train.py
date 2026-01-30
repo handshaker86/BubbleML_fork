@@ -1,33 +1,24 @@
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import OmegaConf
 import hydra
 import torch
-from torch import nn
-import torchvision
-import torch.nn.functional as F
-from torch.utils.data import ConcatDataset, DataLoader, Sampler
-from torch.utils.tensorboard import SummaryWriter
-import torchvision.transforms.functional as TF
-import matplotlib.pyplot as plt
-import numpy as np
 from pathlib import Path
 import os
 import time
 import math
 
+from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.tensorboard import SummaryWriter
 
 from op_lib.disk_hdf5_dataset import DiskTempInputDataset, DiskTempVelDataset
 from op_lib.hdf5_dataset import HDF5ConcatDataset, TempInputDataset, TempVelDataset
 
 from op_lib.temp_trainer import TempTrainer
-from op_lib.vel_trainer import VelTrainer
 from op_lib.push_vel_trainer import PushVelTrainer
 from op_lib.schedule_utils import LinearWarmupLR
 from op_lib import dist_utils
 
 from models.get_model import get_model
-
 
 torch_dataset_map = {
     "temp_input_dataset": (DiskTempInputDataset, TempInputDataset),
@@ -43,9 +34,8 @@ def build_datasets(cfg):
     future_window = cfg.experiment.train.future_window
     push_forward_steps = cfg.experiment.train.push_forward_steps
     use_coords = cfg.experiment.train.use_coords
-    steady_time = cfg.dataset.steady_time
 
-    # normalize temperatures and velocities to [-1, 1]
+    # Normalize temp and vel to [-1, 1]
     train_dataset = HDF5ConcatDataset(
         [
             DatasetClass[0](
@@ -63,7 +53,7 @@ def build_datasets(cfg):
     train_max_temp = train_dataset.normalize_temp_()
     train_max_vel = train_dataset.normalize_vel_()
 
-    # use same mapping as train dataset to normalize validation set
+    # Reuse train normalization for validation
     val_dataset = HDF5ConcatDataset(
         [
             DatasetClass[1](
@@ -123,7 +113,7 @@ def nparams(model):
 def train_app(cfg):
     print(OmegaConf.to_yaml(cfg))
     print(cfg.dataset.train_paths)
-    assert cfg.test or cfg.train
+    assert cfg.test or cfg.train or cfg.benchmark
     assert cfg.data_base_dir is not None
     assert cfg.log_dir is not None
     assert cfg.experiment.train.time_window > 0
@@ -150,11 +140,7 @@ def train_app(cfg):
     train_dataloader, val_dataloader = build_dataloaders(
         train_dataset, val_dataset, cfg
     )
-    print("train size: ", len(train_dataloader))
-    # tail = cfg.dataset.val_paths[0].split('-')[-1]
-    # print(tail, tail[:-5])
-    # val_variable = int(tail[:-5])
-    # print('T_wall of val sim: ', val_variable)
+    print("train size:", len(train_dataloader))
     val_variable = 0
 
     exp = cfg.experiment
@@ -162,8 +148,7 @@ def train_app(cfg):
     in_channels = train_dataset.datasets[0].in_channels
     out_channels = train_dataset.datasets[0].out_channels
 
-    # domain_rows and domain_cols are used to determine the number of modes
-    # used in fourier models.
+    # Domain dims for Fourier model modes
     _, domain_rows, domain_cols = train_dataset.datum_dim()
     downsampled_rows = domain_rows / downsample_factor[0]
     downsampled_cols = domain_cols / downsample_factor[1]
@@ -173,11 +158,17 @@ def train_app(cfg):
     )
 
     if cfg.model_checkpoint:
-        save_dict = torch.load(cfg.model_checkpoint, weights_only=True)
+        ckpt_path = Path(cfg.model_checkpoint).resolve()
+        if not ckpt_path.exists():
+            raise FileNotFoundError(
+                f"model_checkpoint not found: {ckpt_path}\n"
+                f"Use a path relative to cwd: {Path.cwd()}"
+            )
+        save_dict = torch.load(str(ckpt_path), weights_only=True)
         model.load_state_dict(save_dict["model_state_dict"])
     print(model)
-    np = nparams(model)
-    print(f"Model has {np} parameters")
+    n = nparams(model)
+    print(f"Model has {n} parameters")
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -193,8 +184,6 @@ def train_app(cfg):
     if exp.lr_scheduler.name == "step":
         warm_schedule = torch.optim.lr_scheduler.StepLR(
             optimizer,
-            # scaled by len(dataloader) because we check each step
-            # so it's compatible with cosine scheduler
             step_size=exp.lr_scheduler.patience * len(train_dataloader),
             gamma=exp.lr_scheduler.factor,
         )
@@ -204,8 +193,6 @@ def train_app(cfg):
             T_max=exp.train.max_epochs * len(train_dataloader),
             eta_min=exp.lr_scheduler.eta_min,
         )
-    # SequentialLR produces a deprecation warning when calling sub-schedulers.
-    # https://github.com/pytorch/pytorch/issues/76113
     lr_scheduler = torch.optim.lr_scheduler.SequentialLR(
         optimizer, [warmup_lr, warm_schedule], [warmup_iters]
     )
@@ -217,6 +204,14 @@ def train_app(cfg):
         / cfg.dataset.name
     )
     result_save_path.mkdir(parents=True, exist_ok=True)
+
+    prediction_save_path = None
+    if cfg.test and not cfg.benchmark:
+        prediction_save_dir = (
+            Path("prediction") / exp.model.model_name / cfg.dataset.name
+        )
+        prediction_save_dir.mkdir(parents=True, exist_ok=True)
+        prediction_save_path = prediction_save_dir / "prediction_file.npz"
 
     TrainerClass = trainer_map[exp.torch_dataset_name]
     trainer = TrainerClass(
@@ -233,8 +228,24 @@ def train_app(cfg):
         result_save_path,
         train_max_temp,
         train_max_vel,
+        prediction_save_path,
     )
     print(trainer)
+
+    if cfg.benchmark:
+        assert cfg.model_checkpoint, "benchmark requires model_checkpoint"
+        assert (
+            exp.torch_dataset_name == "vel_dataset"
+        ), "benchmark_predict_100_frames only supports vel_dataset (PushVelTrainer)"
+        if dist_utils.is_leader_process():
+            ds = val_dataset.datasets[0]
+            mean_t, std_t, frame_t, n_frames = trainer.benchmark_predict_100_frames(ds)
+            (result_save_path / "benchmark_100_frames.txt").write_text(
+                f"frames: {n_frames}\ntotal_s: {mean_t:.4f} ± {std_t:.4f}\nper_frame_s: {frame_t:.6f}\n"
+            )
+        if dist_utils.dist_is_used():
+            torch.distributed.barrier()
+        return
 
     if cfg.train and not cfg.model_checkpoint:
         trainer.train(exp.train.max_epochs, log_dir, dataset_name=cfg.dataset.name)
@@ -262,12 +273,9 @@ def train_app(cfg):
         save_dict = {
             "id": f"{cfg.dataset.name}_{model_name}_{exp.torch_dataset_name}",
             "metrics": metrics,
-            # used for normalization
             "train_data_max_temp": train_max_temp,
             "train_data_max_vel": train_max_vel,
-            # can be used to restart the learning rate
             "epochs": exp.train.max_epochs,
-            # info needed to reconstruct the model
             "model_state_dict": module.state_dict(),
             "in_channels": in_channels,
             "out_channels": out_channels,
