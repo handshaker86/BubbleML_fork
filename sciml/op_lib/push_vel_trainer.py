@@ -1,28 +1,17 @@
 import os
-import torch
-from torch import nn
-import torchvision
-import torch.nn.functional as F
-from torch.optim.lr_scheduler import ReduceLROnPlateau, PolynomialLR
-from torch.utils.data import ConcatDataset, DataLoader
-from torch.utils.tensorboard import SummaryWriter
-import torchvision.transforms.functional as TF
-import matplotlib.pyplot as plt
-import numpy as np
 import time
 from pathlib import Path
 
-from .hdf5_dataset import HDF5Dataset, TempVelDataset
-from .metrics import compute_metrics, write_metrics
-from .losses import LpLoss
-from .plt_util import plt_temp, plt_iter_mae, plt_vel
-from .heatflux import heatflux
-from .dist_utils import local_rank, is_leader_process
+import numpy as np
+import torch
+import torch.nn.functional as F
+from torch.utils.tensorboard import SummaryWriter
+
+from .dist_utils import local_rank
 from .downsample import downsample_domain
-
-from torch.cuda import nvtx
-
-t_bulk_map = {"wall_super_heat": 58, "subcooled": 50}
+from .losses import LpLoss
+from .metrics import compute_metrics, write_metrics
+from .plt_util import plt_temp, plt_iter_mae, plt_vel
 
 
 class PushVelTrainer:
@@ -41,6 +30,7 @@ class PushVelTrainer:
         result_save_path,
         train_max_temp,
         train_max_vel,
+        prediction_save_path=None,
     ):
         self.model = model
         self.train_dataloader = train_dataloader
@@ -58,6 +48,7 @@ class PushVelTrainer:
         self.result_save_path = result_save_path
         self.train_max_temp = train_max_temp
         self.train_max_vel = train_max_vel
+        self.prediction_save_path = prediction_save_path
 
     def save_checkpoint(self, log_dir, dataset_name):
         timestamp = int(time.time())
@@ -76,11 +67,7 @@ class PushVelTrainer:
             torch.save(self.model.state_dict(), f"{ckpt_path}")
 
     def push_forward_prob(self, epoch, max_epochs):
-        r"""
-        Randomly set the number of push-forward steps based on current
-        iteration. Initially, it's unlike to "push-forward." later in training,
-        it's nearly certain to apply the push-forward trick.
-        """
+        """Probabilistic push-forward steps: rare early, frequent late in training."""
         cur_iter = epoch * len(self.train_dataloader)
         tot_iter = max_epochs * len(self.train_dataloader)
         frac = cur_iter / tot_iter
@@ -91,51 +78,26 @@ class PushVelTrainer:
 
     def train(self, max_epochs, log_dir, dataset_name):
         for epoch in range(max_epochs):
-            print("epoch ", epoch)
+            print("epoch", epoch)
             self.train_step(epoch, max_epochs)
-            self.val_step(epoch)
-            if is_leader_process():
-                val_dataset = self.val_dataloader.dataset.datasets[0]
-                self.test(val_dataset)
-                self.save_checkpoint(log_dir, dataset_name)
 
     def _forward_int(self, coords, temp, vel, dfun):
-        # TODO: account for possibly different timestep sizes of training data
-        input = torch.cat((temp, vel, dfun), dim=1)
+        inp = torch.cat((temp, vel, dfun), dim=1)
         if self.use_coords:
-            input = torch.cat((coords, input), dim=1)
-
-        pred = self.model(input)
-
-        # timesteps = (torch.arange(self.future_window) + 1).cuda().unsqueeze(-1).unsqueeze(-1).float()
-        # timesteps /= 10 # timestep size is 0.1 for vel
-        # timesteps = timesteps.to(pred.device)
-
-        # d_temp = pred[:, :self.future_window]
-        # last_temp_input = temp[:, -1].unsqueeze(1)
-        # temp_pred = last_temp_input + timesteps * d_temp
-
-        # d_vel = pred[:, self.future_window:]
-        # last_vel_input = vel[:, -2:].repeat(1, self.future_window, 1, 1)
-        # timesteps_interleave = torch.repeat_interleave(timesteps, 2, dim=0)
-        # vel_pred = last_vel_input + timesteps_interleave * d_vel
-
+            inp = torch.cat((coords, inp), dim=1)
+        pred = self.model(inp)
         temp_pred = pred[:, : self.future_window]
         vel_pred = pred[:, self.future_window :]
-
         return temp_pred, vel_pred
 
     def _index_push(self, idx, coords, temp, vel, dfun):
-        r"""
-        select the channels for push_forward_step `idx`
-        """
+        """Select channels for push-forward step idx."""
         return (coords[:, idx], temp[:, idx], vel[:, idx], dfun[:, idx])
 
     def _index_dfun(self, idx, dfun):
         return dfun[:, idx]
 
     def push_forward_trick(self, coords, temp, vel, dfun, push_forward_steps):
-        # TODO: clean this up...
         coords_input, temp_input, vel_input, dfun_input = self._index_push(
             0, coords, temp, vel, dfun
         )
@@ -168,8 +130,6 @@ class PushVelTrainer:
 
     def train_step(self, epoch, max_epochs):
         self.model.train()
-
-        # warmup before doing push forward trick
         for iter, (coords, temp, vel, dfun, temp_label, vel_label) in enumerate(
             self.train_dataloader
         ):
@@ -186,7 +146,6 @@ class PushVelTrainer:
 
             idx = push_forward_steps - 1
             temp_label = temp_label[:, idx].to(local_rank()).float()
-            idx = push_forward_steps - 1
             vel_label = vel_label[:, idx].to(local_rank()).float()
 
             temp_label, vel_label = downsample_domain(
@@ -236,13 +195,10 @@ class PushVelTrainer:
 
     @staticmethod
     def _inverse_transform(data, scale):
-        r"""
-        Inverse normalization of the data.
-        """
+        """Inverse normalization."""
         return data * scale
 
     def test(self, dataset, max_time_limit=200, warmup_runs=5, average_runs=10):
-
         self.model.eval()
         print(f"Warming up GPU...")
         for _ in range(warmup_runs):
@@ -264,6 +220,7 @@ class PushVelTrainer:
         vel_scale = self.train_max_vel
 
         for run_idx in range(num_runs):
+            dataset.reset()
             self.model.eval()
             temps = []
             temps_labels = []
@@ -277,7 +234,6 @@ class PushVelTrainer:
                 temp = temp.to(local_rank()).float().unsqueeze(0)
                 vel = vel.to(local_rank()).float().unsqueeze(0)
                 dfun = dfun.to(local_rank()).float().unsqueeze(0)
-                # val doesn't apply push-forward
                 temp_label = temp_label[0].to(local_rank()).float()
                 vel_label = vel_label[0].to(local_rank()).float()
                 temp_label = self._inverse_transform(temp_label, temp_scale)
@@ -319,16 +275,10 @@ class PushVelTrainer:
         vels_labels = torch.cat(vels_labels, dim=0)
         dfun = dataset.get_dfun()[: temps.size(0)]
 
-        print(temps.size(), temps_labels.size(), dfun.size())
-        print(vels.size(), vels_labels.size(), dfun.size())
-
         velx_preds = vels[0::2]
         velx_labels = vels_labels[0::2]
         vely_preds = vels[1::2]
         vely_labels = vels_labels[1::2]
-
-        print(temps.size(), temps_labels.size(), dfun.size())
-
         temp_metrics = compute_metrics(temps, temps_labels, dfun)
         print("TEMP METRICS")
         print(temp_metrics)
@@ -338,28 +288,44 @@ class PushVelTrainer:
         vely_metrics = compute_metrics(vely_preds, vely_labels, dfun)
         print("VELY METRICS")
         print(vely_metrics)
+        vel_preds = torch.stack((velx_preds, vely_preds), dim=1)
+        vel_labels = torch.stack((velx_labels, vely_labels), dim=1)
+        vel_metrics = compute_metrics(vel_preds, vel_labels, dfun)
+        print("VELOCITY METRICS")
+        print(vel_metrics)
 
         os.makedirs(self.result_save_path, exist_ok=True)
         with open(self.result_save_path / "metrics.txt", "w") as f:
             f.write(f"Temp metrics: {temp_metrics}\n")
             f.write(f"Velx metrics: {velx_metrics}\n")
             f.write(f"Vely metrics: {vely_metrics}\n")
+            f.write(f"Vel metrics: {vel_metrics}\n")
 
         with open(self.result_save_path / "loss.txt", "w") as f:
-            velx_loss = velx_metrics.rmse
-            vely_loss = vely_metrics.rmse
-            vel_rmse = (velx_loss + vely_loss) / 2
-            temp_loss = temp_metrics.rmse
-            f.write(f"Velocity RMSE: {vel_rmse}\n")
-            f.write(f"Temperature RMSE: {temp_loss}\n")
+            f.write(f"RMSE: {vel_metrics.rmse}\n")
+            f.write(f"Rel L2: {vel_metrics.rel_l2}\n")
+            f.write(f"Rel Vorticity: {vel_metrics.rel_vort}\n")
+            f.write(f"Div Error: {vel_metrics.div_error}\n")
+            f.write(f"Spectral Error: {vel_metrics.spectral_error}\n")
 
         with open(self.result_save_path / "predict_time.txt", "w") as f:
             f.write(f"Total prediction time: {total_prediction_time}\n")
             f.write(f"Frame prediction time: {frame_prediction_time}\n")
 
-        # xgrid = dataset.get_x().permute((2, 0, 1))
-        # print(heatflux(temps, dfun, self.val_variable, xgrid, dataset.get_dy()))
-        # print(heatflux(labels, dfun, self.val_variable, xgrid, dataset.get_dy()))
+        if self.prediction_save_path is not None:
+            pred_velx = velx_preds.numpy()
+            pred_vely = vely_preds.numpy()
+            assert pred_velx.ndim == 3 and pred_vely.ndim == 3
+            n_frames = pred_velx.shape[0]
+            pred_dict = {
+                f"frame_{i}": np.stack([pred_velx[i], pred_vely[i]], axis=0)
+                for i in range(n_frames)
+            }
+            np.savez(self.prediction_save_path, **pred_dict)
+            print(
+                f"Prediction saved: {self.prediction_save_path} "
+                f"frames={n_frames} (u,v) each (2,h,w)"
+            )
 
         model_name = self.model.__class__.__name__
         plt_iter_mae(temps, temps_labels)
@@ -382,3 +348,89 @@ class PushVelTrainer:
         )
 
         dataset.reset()
+
+    def benchmark_predict_100_frames(
+        self,
+        dataset,
+        num_frames=100,
+        warmup_runs=5,
+        average_runs=10,
+    ):
+        """Benchmark prediction time for num_frames; returns mean, std, per-frame time."""
+        self.model.eval()
+        time_limit = min(num_frames, len(dataset))
+        if time_limit < self.future_window:
+            time_limit = min(self.future_window, len(dataset))
+        actual_frames = (time_limit // self.future_window) * self.future_window
+
+        print(f"Warming up GPU ({warmup_runs} runs)...")
+        for _ in range(warmup_runs):
+            coords, temp, vel, dfun, temp_label, vel_label = dataset[0]
+            coords = coords.to(local_rank()).float().unsqueeze(0)
+            temp = temp.to(local_rank()).float().unsqueeze(0)
+            vel = vel.to(local_rank()).float().unsqueeze(0)
+            dfun = dfun.to(local_rank()).float().unsqueeze(0)
+            temp_pred, vel_pred = self._forward_int(
+                coords[:, 0], temp[:, 0], vel[:, 0], dfun[:, 0]
+            )
+        torch.cuda.synchronize()
+        print("GPU ready.")
+
+        temp_scale = self.train_max_temp
+        vel_scale = self.train_max_vel
+        all_run_times = []
+        num_runs = max(1, average_runs)
+
+        for run_idx in range(num_runs):
+            dataset.reset()
+            self.model.eval()
+            temps = []
+            temps_labels = []
+            vels = []
+            vels_labels = []
+            total_prediction_time = 0.0
+
+            for timestep in range(0, time_limit, self.future_window):
+                coords, temp, vel, dfun, temp_label, vel_label = dataset[timestep]
+                coords = coords.to(local_rank()).float().unsqueeze(0)
+                temp = temp.to(local_rank()).float().unsqueeze(0)
+                vel = vel.to(local_rank()).float().unsqueeze(0)
+                dfun = dfun.to(local_rank()).float().unsqueeze(0)
+                temp_label = temp_label[0].to(local_rank()).float()
+                vel_label = vel_label[0].to(local_rank()).float()
+                temp_label = self._inverse_transform(temp_label, temp_scale)
+                vel_label = self._inverse_transform(vel_label, vel_scale)
+
+                torch.cuda.synchronize()
+                start_time = time.perf_counter()
+                with torch.no_grad():
+                    temp_pred, vel_pred = self._forward_int(
+                        coords[:, 0], temp[:, 0], vel[:, 0], dfun[:, 0]
+                    )
+                    temp_pred = temp_pred.squeeze(0)
+                    vel_pred = vel_pred.squeeze(0)
+                    dataset.write_temp(temp_pred, timestep)
+                    dataset.write_vel(vel_pred, timestep)
+                    temp_pred = self._inverse_transform(temp_pred, temp_scale)
+                    vel_pred = self._inverse_transform(vel_pred, vel_scale)
+                    temps.append(temp_pred.detach().cpu())
+                    temps_labels.append(temp_label.detach().cpu())
+                    vels.append(vel_pred.detach().cpu())
+                    vels_labels.append(vel_label.detach().cpu())
+
+                torch.cuda.synchronize()
+                end_time = time.perf_counter()
+                total_prediction_time += end_time - start_time
+
+            all_run_times.append(total_prediction_time)
+
+        mean_time = sum(all_run_times) / len(all_run_times)
+        variance = sum((t - mean_time) ** 2 for t in all_run_times) / len(all_run_times)
+        std_time = variance**0.5
+        frame_time = mean_time / actual_frames
+
+        print(f"Benchmark: {actual_frames} frames, {num_runs} runs")
+        print(f"  Total time: {mean_time:.4f} ± {std_time:.4f} s")
+        print(f"  Per-frame:  {frame_time:.6f} s")
+        dataset.reset()
+        return mean_time, std_time, frame_time, actual_frames

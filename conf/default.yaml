@@ -6,6 +6,7 @@ log_dir: "logs/"
 
 train: True
 test: True
+benchmark: False
 
 model_checkpoint:
 
