@@ -4,12 +4,13 @@
 data_base_dir: "../bubbleml_dataset"
 log_dir: "logs/"
 
-train: True
-test: True
-
-model_checkpoint:
+train: False  
+test: False
+benchmark: False
+model_checkpoint: 
 
 defaults:
   - _self_
-  - dataset: PB_Gravity
-  - experiment: experimental/unet_bench/pb_vel
+  - dataset: FB_InletVel
+  - experiment: experimental/fno/fb_vel
+  
