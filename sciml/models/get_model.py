@@ -5,6 +5,7 @@ from .gefno.gfno import GFNO2d
 from .pdebench.unet import UNet2d 
 from .pdearena.unet import Unet, FourierUnet
 from .ConvolutionalNeuralOperator.CNOModule import CNO
+from .transolver.transolver import Transolver
 
 from torch.nn.parallel import DistributedDataParallel as DDP
 
@@ -23,6 +24,8 @@ _GFNO = 'gfno'
 
 _CNO = 'cno'
 
+_TRANSOLVER = 'transolver'
+
 _MODEL_LIST = [
     _UNET_BENCH,
     _UNET_ARENA,
@@ -31,7 +34,8 @@ _MODEL_LIST = [
     _UNO,
     _FFNO,
     _GFNO,
-    _CNO
+    _CNO,
+    _TRANSOLVER
 ]
 
 def get_model(model_name,
@@ -103,10 +107,22 @@ def get_model(model_name,
                        reflection=exp.model.reflection,
                        domain_padding=exp.model.domain_padding) # padding is NEW
     elif model_name == _CNO:
-        model = CNO(in_dim=in_channels, 
-                    in_size=exp.model.in_size, 
+        model = CNO(in_dim=in_channels,
+                    in_size=exp.model.in_size,
                     N_layers=exp.model.n_layers,
                     out_dim=exp.train.future_window)
+    elif model_name == _TRANSOLVER:
+        model = Transolver(in_channels=in_channels,
+                           out_channels=out_channels,
+                           domain_rows=domain_rows,
+                           domain_cols=domain_cols,
+                           n_hidden=exp.model.n_hidden,
+                           n_layers=exp.model.n_layers,
+                           n_head=exp.model.n_head,
+                           slice_num=exp.model.slice_num,
+                           mlp_ratio=exp.model.mlp_ratio,
+                           dropout=exp.model.dropout,
+                           act=exp.model.act)
     if exp.distributed:
         local_rank = int(os.environ['LOCAL_RANK'])
         model = model.to(local_rank).float()
